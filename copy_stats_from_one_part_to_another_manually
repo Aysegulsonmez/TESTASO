@@ -1,0 +1,141 @@
+tatistics can optionally be scaled based on the given scale_factor.
+
+
+The definition of the procedure is as follows:
+
+ 
+DBMS_STATS.COPY_TABLE_STATS (
+   ownname          VARCHAR2, 
+   tabname          VARCHAR2, 
+   srcpartname      VARCHAR2,
+   dstpartname      VARCHAR2, 
+   scale_factor     VARCHAR2 DEFAULT 1,
+   flags            NUMBER DEFAULT,
+   force            BOOLEAN DEFAULT FALSE);
+ Where:
+
+Ownname:       Name of the schema
+Tabname:        Table name of source and destination [sub] partition
+Srcpartname: Source [sub] partition
+Dtspartname: Destination [sub] partition
+Scale factor:   To scale nblks, nrows etc. in destination partition
+Flags:              For internal Oracle use (should be left as NULL)
+Force:              When TRUE, copy statistics will be copied even when statisitcs are locked by DBMS_STATS.LOCK_*_STATISTICS
+NOTE:
+
+In 10g, this procedure is FOR INTERNAL USE ONLY.  Use of the procedure in 10g may work but is not supported due to this.
+In 11g and 12c, the procedure is externalized and is supported.
+
+
+Example
+
+
+Setup
+REM CREATE TABLE
+REM ============
+CREATE TABLE sales_range
+(salesman_id NUMBER(5),
+salesman_name VARCHAR2(30),
+sales_amount NUMBER(10),
+sales_date DATE)
+PARTITION BY RANGE(sales_date)
+(
+PARTITION sales_jan2000 VALUES LESS THAN(TO_DATE('02/01/2000','DD/MM/YYYY')),
+PARTITION sales_feb2000 VALUES LESS THAN(TO_DATE('03/01/2000','DD/MM/YYYY')),
+PARTITION sales_mar2000 VALUES LESS THAN(TO_DATE('04/01/2000','DD/MM/YYYY')),
+PARTITION sales_apr2000 VALUES LESS THAN(TO_DATE('05/01/2000','DD/MM/YYYY'))
+);
+
+REM CREATE LOCAL INDEX
+REM ==================
+create index salesman_id_ix on sales_range (salesman_id) local;
+
+REM POPULATE TABLE
+REM ===============
+insert into sales_range values(10,'SCOTT',1000,'01-JAN-2000');
+insert into sales_range values(20,'SMITH',1200,'01-JAN-2000');
+insert into sales_range values(30,'ALLEN',1300,'01-JAN-2000');
+commit;
+
+REM GATHER STATISTICS
+REM ==================
+exec dbms_stats.gather_table_stats(ownname=>'', tabname=> 'sales_range', granularity=>'ALL');
+
+Table SALES_RANGE has been created with 3 partitions containing a local index.
+Data has been inserted into partition SALES_JAN2000 and statistics gathered on all partitions
+
+SQL> select count(*) from sales_range partition (SALES_JAN2000);
+
+  COUNT(*)
+----------
+         3
+
+SQL> select count(*) from sales_range partition (SALES_FEB2000);
+
+  COUNT(*)
+----------
+         0
+
+SQL>  select num_rows,AVG_ROW_LEN,BLOCKS,PARTITION_NAME from user_tab_partitions where table_name='SALES_RANGE';
+
+  NUM_ROWS AVG_ROW_LEN     BLOCKS PARTITION_NAME
+---------- ----------- ---------- ------------------------------
+         3          20         46 SALES_JAN2000
+         0           0          0 SALES_FEB2000
+         0           0          0 SALES_MAR2000
+         0           0          0 SALES_APR2000
+
+
+SQL> select partition_name, num_rows,leaf_blocks,avg_leaf_blocks_per_key from  user_ind_partitions where index_name='SALESMAN_ID_IX';
+
+PARTITION_NAME                   NUM_ROWS LEAF_BLOCKS AVG_LEAF_BLOCKS_PER_KEY
+------------------------------ ---------- ----------- -----------------------
+SALES_JAN2000                           3           1                       1
+SALES_FEB2000                           0           0                       0
+SALES_MAR2000                           0           0                       0
+SALES_APR2000                           0           0                       0
+
+SALES_JAN2000 shows a count of  3 rows whereas SALES_FEB2000 shows 0 rows
+USER_TAB_PARTITIONS and USER_TAB_INDEXES show non-zero information for partition SALES_JAN2000 that has been populated with data
+The other partitions that do not contain data show all statisitc information as 0.
+
+
+Copying Statistics
+
+SQL> EXEC DBMS_STATS.COPY_TABLE_STATS ('','SALES_RANGE','SALES_JAN2000','SALES_FEB2000',2);
+
+PL/SQL procedure successfully completed.
+
+Statistics are copied from SALES_JAN2000 partition to SALES_FEB2000 partition using a scale-factor of 2.
+
+
+SQL> select num_rows,AVG_ROW_LEN,BLOCKS,PARTITION_NAME from user_tab_partitions where table_name='SALES_RANGE';
+
+  NUM_ROWS AVG_ROW_LEN     BLOCKS PARTITION_NAME
+---------- ----------- ---------- ------------------------------
+         3          20         46 SALES_JAN2000
+         6          20         92 SALES_FEB2000
+         0           0          0 SALES_MAR2000
+         0           0          0 SALES_APR2000
+
+SQL> select partition_name, num_rows,leaf_blocks,avg_leaf_blocks_per_key 
+from  user_ind_partitions
+ where index_name='SALESMAN_ID_IX';
+
+PARTITION_NAME                   NUM_ROWS LEAF_BLOCKS AVG_LEAF_BLOCKS_PER_KEY
+------------------------------ ---------- ----------- -----------------------
+SALES_JAN2000                           3           1                       1
+SALES_FEB2000                           6           2                       2
+SALES_MAR2000                           0           0                       0
+SALES_APR2000                           0           0                       0
+
+USER_TAB_PARTITIONS and USER_TAB_INDEXES  now show non-zero information for partition SALES_FEB2000.
+As we have used a scale-factor of 2, the copied statistics have been multiplied by a factor of 2.
+
+
+
+
+
+
+
+
